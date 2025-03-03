@@ -21,10 +21,10 @@ def check_dependencies():
         # Check Python version
         if sys.version_info >= (3, 12):
             print(
-                "⚠️ Python 3.12+ detected - Playwright/AsyncChromiumLoader may not work correctly."
+                "⚠️ Python 3.12+ detected - Playwright/AsyncChromiumLoader will be attempted but may not work correctly."
             )
             print(
-                "   The application will fall back to BeautifulSoup for web scraping."
+                "   The application will automatically fall back to BeautifulSoup for web scraping if needed."
             )
 
         # Check for web scraping dependencies - all are optional with fallbacks

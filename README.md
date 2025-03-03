@@ -95,14 +95,13 @@ If you encounter any API-related errors:
 
 ### Python 3.12 Compatibility Note
 
-If you're using Python 3.12 or later, you may encounter issues with the Playwright-based web scraping (AsyncChromiumLoader). This is a known compatibility issue between Python 3.12 and Playwright's asyncio implementation.
+The application will attempt to use Playwright-based web scraping (AsyncChromiumLoader) regardless of Python version. While there are known compatibility issues between Python 3.12 and Playwright's asyncio implementation, the code will try to use it and automatically fall back to BeautifulSoup if AsyncChromiumLoader fails.
 
-The application has been updated to automatically detect Python 3.12 and will fall back to using BeautifulSoup for web scraping, which works reliably across all Python versions.
+If you encounter issues with web scraping:
 
-If you require the enhanced web scraping capabilities of Playwright:
-
-- Consider using Python 3.11 instead of 3.12
-- Or wait for future updates to Playwright that will resolve this compatibility issue
+- The application will automatically fall back to using BeautifulSoup for web scraping, which works reliably across all Python versions
+- For most reliable results with AsyncChromiumLoader, consider using Python 3.11 instead of 3.12
+- Future updates to Playwright may resolve the compatibility issues with Python 3.12
 
 ## Contributing
 

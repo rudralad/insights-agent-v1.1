@@ -350,18 +350,11 @@ def scrape_content(urls: List[str]) -> List[Dict[str, Any]]:
 
         # Method 1: Try LangChain AsyncChromiumLoader + BeautifulSoupTransformer
         try:
-            # Check if we're running on Python 3.12, which has known issues with Playwright
-            if sys.version_info >= (3, 12):
-                print(
-                    "Python 3.12+ detected - skipping AsyncChromiumLoader due to compatibility issues"
-                )
-                raise NotImplementedError(
-                    "Python 3.12 is not fully compatible with Playwright"
-                )
-
+            # Remove version check to always try AsyncChromiumLoader regardless of Python version
             print(
                 f"Attempting to scrape {len(web_urls)} URLs with LangChain AsyncChromiumLoader"
             )
+
             # Load HTML with AsyncChromiumLoader
             loader = AsyncChromiumLoader(web_urls)
             html_documents = loader.load()
@@ -435,13 +428,14 @@ def scrape_content(urls: List[str]) -> List[Dict[str, Any]]:
                 failed_urls = web_urls.copy()
                 print("No documents returned from AsyncChromiumLoader")
         except (NotImplementedError, ImportError) as e:
-            # This will catch both the Python 3.12 issue and missing dependencies
+            # This will catch dependencies or implementation issues
             failed_urls = web_urls.copy()
-            print(f"AsyncChromiumLoader not available or compatible: {e}")
+            print(f"AsyncChromiumLoader dependency or implementation issue: {e}")
             print("Falling back to BeautifulSoup directly.")
         except Exception as lc_error:
             failed_urls = web_urls.copy()
-            print(f"Error using LangChain scraping: {lc_error}")
+            print(f"Error using AsyncChromiumLoader: {lc_error}")
+            print("Falling back to BeautifulSoup directly.")
 
         # Method 2: Fall back to direct BeautifulSoup for failed URLs
         if failed_urls:
