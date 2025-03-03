@@ -1,0 +1,33 @@
+# Insights Agent Configuration
+
+# API Keys
+[api]
+openai = "your-openai-api-key-here"
+tavily = "your-tavily-api-key-here"
+firecrawl = "your-firecrawl-api-key-here"
+airtable = "your-airtable-api-key-here"
+
+# Web Scraping Configuration
+[scraping]
+user_agent = "myagent/1.0"
+
+# LangSmith Configuration
+[langsmith]
+tracing = false
+endpoint = "https://api.smith.langchain.com"
+api_key = "your-langsmith-api-key-here"
+project = "your-project-name"
+
+# Airtable Configuration
+[airtable]
+# Note: Airtable configuration is now managed through environment variables (.env file)
+# Set the following variables in your .env file:
+# AIRTABLE_API_KEY, AIRTABLE_BASE_ID, AIRTABLE_USERS_TABLE_ID, 
+# AIRTABLE_RESEARCH_TABLE_ID, AIRTABLE_SEARCH_DATA_TABLE_ID, AIRTABLE_ANALYTICS_TABLE_ID
+
+# Application Settings
+[app]
+# Set to true to disable Airtable operations for performance
+skip_airtable_operations = false
+# Set to true during testing to disable actual API calls
+testing = false 
