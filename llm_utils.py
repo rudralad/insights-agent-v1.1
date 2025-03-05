@@ -11,13 +11,84 @@ import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 import tempfile
 import uuid
+import sys
+
+# Common model options for each provider
+OPENAI_MODELS = ["o1-mini", "gpt-3.5-turbo", "gpt-4", "gpt-4-turbo"]
+GROQ_MODELS = ["llama3-70b-8192", "llama3-8b-8192", "mixtral-8x7b-32768", "gemma-7b-it"]
+GEMINI_MODELS = [
+    "gemini-1.5-pro",
+    "gemini-1.5-flash",
+    "gemini-pro",
+    "gemini-pro-vision",
+]
+
+# Import LLM providers
+try:
+    from langchain_groq import ChatGroq
+except ImportError:
+    ChatGroq = None
+
+try:
+    from langchain_google_genai import ChatGoogleGenerativeAI
+except ImportError:
+    ChatGoogleGenerativeAI = None
 
 # Load environment variables
 load_dotenv()
 
 
+# Initialize LLM based on provider configuration
+def initialize_llm():
+    """
+    Initialize LLM based on provider configuration in environment variables.
+    Supports OpenAI, Groq, and Gemini.
+
+    Returns:
+        The initialized LLM instance
+    """
+    provider = os.getenv("LLM_PROVIDER", "openai").lower()
+    model = os.getenv("LLM_MODEL", "o1-mini")
+
+    print(f"Initializing LLM with provider: {provider}, model: {model}")
+
+    if provider == "openai":
+        return ChatOpenAI(
+            model=model, api_key=os.getenv("OPENAI_API_KEY"), temperature=0.7
+        )
+    elif provider == "groq":
+        if ChatGroq is None:
+            print(
+                "ERROR: Groq integration not available. Install with 'pip install langchain-groq'."
+            )
+            print("Falling back to OpenAI.")
+            return ChatOpenAI(
+                model="o1-mini", api_key=os.getenv("OPENAI_API_KEY"), temperature=0.7
+            )
+
+        return ChatGroq(model=model, api_key=os.getenv("GROQ_API_KEY"), temperature=0.7)
+    elif provider == "gemini":
+        if ChatGoogleGenerativeAI is None:
+            print(
+                "ERROR: Google Gemini integration not available. Install with 'pip install langchain-google-genai'."
+            )
+            print("Falling back to OpenAI.")
+            return ChatOpenAI(
+                model="o1-mini", api_key=os.getenv("OPENAI_API_KEY"), temperature=0.7
+            )
+
+        return ChatGoogleGenerativeAI(
+            model=model, api_key=os.getenv("GEMINI_API_KEY"), temperature=0.7
+        )
+    else:
+        print(f"WARNING: Unknown LLM provider '{provider}'. Falling back to OpenAI.")
+        return ChatOpenAI(
+            model="o1-mini", api_key=os.getenv("OPENAI_API_KEY"), temperature=0.7
+        )
+
+
 # Initialize LLM
-llm = ChatOpenAI(model="o1-mini", api_key=os.getenv("OPENAI_API_KEY"))
+llm = initialize_llm()
 
 # Initialize OpenAI embedding model
 print("Initializing OpenAI embeddings...")

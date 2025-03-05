@@ -46,10 +46,30 @@ A specialized research agent for physiotherapy and rehabilitation topics. This t
 
 This application requires the following API keys:
 
-- **OpenAI API Key**: For LLM functionality
+- **LLM Provider API Key**: Based on your chosen provider:
+  - **OpenAI API Key**: If using OpenAI models (default)
+  - **Groq API Key**: If using Groq models
+  - **Gemini API Key**: If using Google Gemini models
+- **OpenAI API Key**: Always required for embeddings functionality
 - **Tavily API Key**: For web search capabilities
 - **Firecrawl API Key** (optional): For enhanced scraping of complex websites (disabled by default)
 - **Airtable API Key** (optional): For storing research data and analytics
+
+## Configuration
+
+The application supports multiple LLM providers, which can be configured in the `.env` file:
+
+```
+# LLM Provider Configuration
+# Options: openai, groq, gemini
+LLM_PROVIDER=openai
+
+# LLM Model Selection
+# For OpenAI: o1-mini, gpt-3.5-turbo, gpt-4, etc.
+# For Groq: llama3-70b-8192, mixtral-8x7b-32768, etc.
+# For Gemini: gemini-1.5-pro, gemini-1.5-flash, etc.
+LLM_MODEL=o1-mini
+```
 
 ## Usage
 

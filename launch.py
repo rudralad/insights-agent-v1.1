@@ -94,8 +94,21 @@ def check_api_keys():
 
     # Required API keys
     missing_keys = []
-    if not os.getenv("OPENAI_API_KEY"):
+
+    # Check for LLM API keys based on configured provider
+    llm_provider = os.getenv("LLM_PROVIDER", "openai").lower()
+    if llm_provider == "openai" and not os.getenv("OPENAI_API_KEY"):
         missing_keys.append("OPENAI_API_KEY")
+    elif llm_provider == "groq" and not os.getenv("GROQ_API_KEY"):
+        missing_keys.append("GROQ_API_KEY")
+    elif llm_provider == "gemini" and not os.getenv("GEMINI_API_KEY"):
+        missing_keys.append("GEMINI_API_KEY")
+
+    # Always check for OpenAI API key for embeddings
+    if not os.getenv("OPENAI_API_KEY"):
+        if "OPENAI_API_KEY" not in missing_keys:
+            missing_keys.append("OPENAI_API_KEY (required for embeddings)")
+
     if not os.getenv("TAVILY_API_KEY"):
         missing_keys.append("TAVILY_API_KEY")
 
