@@ -46,19 +46,37 @@ except ImportError:
 load_dotenv()
 
 
-# Custom output parser that extracts content after ,think><think/> tags
+# Custom output parser that extracts content after think tags.
+# Supports formats: ,think><think/> and <think>
 class ThinkTagsOutputParser(BaseOutputParser):
     """
-    Custom output parser that extracts content after ,think><think/> tags.
+    Custom output parser that extracts content after think tags.
+    Supports formats: ,think><think/> and <think>
     If these tags are not present, it returns the original content.
     """
 
     def parse(self, text):
+        # Check for ,think><think/> format
         if ",think><think/>" in text:
             # Extract everything after the tags
-            content_after_tags = text.split(",think><think/>", 1)[1].strip()
-            print("Found think tags, extracting content after them")
+            content_after_tags = text.split(",think><think/", 1)[1].strip()
+            print("Found ,think><think/> tags, extracting content after them")
             return content_after_tags
+
+        # Check for <think><think/> format (previously implemented format)
+        elif "<think><think/>" in text:
+            # Extract everything after the tags
+            content_after_tags = text.split("<think><think/>", 1)[1].strip()
+            print("Found <think><think/> tags, extracting content after them")
+            return content_after_tags
+
+        # Check for <think> format
+        elif "<think>" in text:
+            # Extract everything after the tags
+            content_after_tags = text.split("<think>", 1)[1].strip()
+            print("Found <think> tags, extracting content after them")
+            return content_after_tags
+
         return text
 
 
@@ -89,11 +107,11 @@ def initialize_llm():
             )
             print("Falling back to OpenAI.")
             base_llm = ChatOpenAI(
-                model="o1-mini", api_key=os.getenv("OPENAI_API_KEY"), temperature=0.7
+                model="o1-mini", api_key=os.getenv("OPENAI_API_KEY"), temperature=0
             )
         else:
             base_llm = ChatGroq(
-                model=model, api_key=os.getenv("GROQ_API_KEY"), temperature=0.7
+                model=model, api_key=os.getenv("GROQ_API_KEY"), temperature=0
             )
     elif provider == "gemini":
         if ChatGoogleGenerativeAI is None:
@@ -102,16 +120,16 @@ def initialize_llm():
             )
             print("Falling back to OpenAI.")
             base_llm = ChatOpenAI(
-                model="o1-mini", api_key=os.getenv("OPENAI_API_KEY"), temperature=0.7
+                model="o1-mini", api_key=os.getenv("OPENAI_API_KEY"), temperature=0
             )
         else:
             base_llm = ChatGoogleGenerativeAI(
-                model=model, api_key=os.getenv("GEMINI_API_KEY"), temperature=0.7
+                model=model, api_key=os.getenv("GEMINI_API_KEY"), temperature=0
             )
     else:
         print(f"WARNING: Unknown LLM provider '{provider}'. Falling back to OpenAI.")
         base_llm = ChatOpenAI(
-            model="o1-mini", api_key=os.getenv("OPENAI_API_KEY"), temperature=0.7
+            model="o1-mini", api_key=os.getenv("OPENAI_API_KEY"), temperature=0
         )
 
     # Wrap the LLM with the ThinkTagsOutputParser
@@ -136,6 +154,7 @@ document_store = {"ids": [], "texts": [], "embeddings": [], "metadatas": []}
 def generate_search_queries(query: str, num_queries: int = 5) -> List[str]:
     """
     Generate diverse search queries based on the original query.
+    Extracts content after <think> tags if present in the LLM response.
 
     Args:
         query: The original query from the user
@@ -154,6 +173,8 @@ def generate_search_queries(query: str, num_queries: int = 5) -> List[str]:
         Generate {num_queries} different search queries that would help gather comprehensive information about this topic.
         Each query should focus on different aspects or use different terminology.
         
+        If you want to include your thinking process, put it before a <think> tag, and put the actual queries after the tag.
+        
         Output the queries as a numbered list, one per line, without any additional text.
         """
     )
@@ -163,6 +184,13 @@ def generate_search_queries(query: str, num_queries: int = 5) -> List[str]:
 
     # Generate queries
     result = chain.invoke({"query": query, "num_queries": num_queries})
+
+    # Check if the result contains <think> tags and extract content after them
+    if "<think>" in result:
+        print(
+            "Found <think> tags in query generation, extracting queries after the tags"
+        )
+        result = result.split("<think>", 1)[1].strip()
 
     # Parse the result into a list of queries
     queries = []
@@ -352,6 +380,7 @@ def extract_insights(scraped_content: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Extract key insights from scraped content using LLM.
     Uses semantic search to rank content by relevance before analysis.
+    Extracts content after <think> tags if present in the LLM response.
 
     Args:
         scraped_content: List of scraped content dictionaries
@@ -401,6 +430,8 @@ def extract_insights(scraped_content: List[Dict[str, Any]]) -> Dict[str, Any]:
         4. Expert opinions
         5. Recent developments
         
+        If you want to include your thinking process, put it before a <think> tag, and put the actual insights after the tag.
+        
         Content:
         {content}
         
@@ -416,6 +447,13 @@ def extract_insights(scraped_content: List[Dict[str, Any]]) -> Dict[str, Any]:
     # Extract insights
     insights = chain.invoke({"content": combined_text})
 
+    # Check if the result contains <think> tags and extract content after them
+    if "<think>" in insights:
+        print(
+            "Found <think> tags in insights extraction, extracting content after the tags"
+        )
+        insights = insights.split("<think>", 1)[1].strip()
+
     print(f"Extracted insights from {len(ranked_content)} sources")
 
     return {"insights": insights, "sources": scraped_content}
@@ -425,6 +463,7 @@ def generate_report(query: str, extraction_results: Dict[str, Any]) -> Dict[str,
     """
     Generate a comprehensive research report based on extracted insights.
     Uses semantic search to ensure the most relevant sources are prioritized.
+    Extracts content after <think> tags if present in the LLM response.
 
     Args:
         query: The original research query
@@ -485,6 +524,8 @@ def generate_report(query: str, extraction_results: Dict[str, Any]) -> Dict[str,
         4. Analysis and implications
         5. Conclusion
         
+        If you want to include your thinking process, put it before a <think> tag, and put the actual report after the tag.
+        
         Important guidelines:
         - Maintain a neutral, analytical tone
         - Cite sources using [Source X] notation when referencing specific information
@@ -505,6 +546,13 @@ def generate_report(query: str, extraction_results: Dict[str, Any]) -> Dict[str,
     report_content = chain.invoke(
         {"query": query, "insights": insights, "sources": sources_text}
     )
+
+    # Check if the result contains <think> tags and extract content after them
+    if "<think>" in report_content:
+        print(
+            "Found <think> tags in report generation, extracting content after the tags"
+        )
+        report_content = report_content.split("<think>", 1)[1].strip()
 
     # Format citations in AMA style
     formatted_citations = []
