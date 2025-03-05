@@ -457,6 +457,7 @@ def generate_report(query: str, extraction_results: Dict[str, Any]) -> Dict[str,
     Generate a comprehensive research report based on extracted insights.
     Uses semantic search to ensure the most relevant sources are prioritized.
     The ThinkTagsOutputParser extracts content after </think> tags if present.
+    Handles token limitations for different LLM providers.
 
     Args:
         query: The original research query
@@ -496,6 +497,36 @@ def generate_report(query: str, extraction_results: Dict[str, Any]) -> Dict[str,
         )
         sources_text += f"\nSource {source['id']}: {source['title']} {relevance_indicator} - {source['url']}"
 
+    # Check current LLM provider to handle token limits appropriately
+    provider = os.getenv("LLM_PROVIDER", "openai").lower()
+
+    # Check if we need to split the report generation due to token limits
+    # Estimate tokens based on character count (rough approximation)
+    total_chars = len(query) + len(insights) + len(sources_text)
+
+    # For Groq, handle the token limitation
+    if provider == "groq" and total_chars > 12000:  # ~4000-5000 tokens
+        return generate_report_in_parts(query, insights, sources_text, source_info)
+    else:
+        # Standard approach for models that can handle the full content
+        return generate_single_report(query, insights, sources_text, source_info)
+
+
+def generate_single_report(
+    query: str, insights: str, sources_text: str, source_info: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """
+    Generate a report in a single LLM call.
+
+    Args:
+        query: The original research query
+        insights: Extracted insights
+        sources_text: Formatted source information
+        source_info: List of source metadata
+
+    Returns:
+        Dictionary with report content and citations
+    """
     # Prompt for generating the report
     prompt = PromptTemplate.from_template(
         """You are a professional research analyst tasked with creating a comprehensive report on a topic.
@@ -543,69 +574,227 @@ def generate_report(query: str, extraction_results: Dict[str, Any]) -> Dict[str,
     # Format citations in AMA style
     formatted_citations = []
     for source in source_info:
-        # AMA style: Authors. Title. Publication date. URL.
-        citation = ""
-
-        # Authors (Last name First initial.)
-        if source["authors"]:
-            author_list = []
-            for author in source["authors"]:
-                # Try to format author names if possible
-                parts = author.split()
-                if len(parts) > 1:
-                    # Last name, first initial
-                    last_name = parts[-1]
-                    first_initial = parts[0][0] if parts[0] else ""
-                    author_list.append(f"{last_name} {first_initial}.")
-                else:
-                    author_list.append(author)
-
-            if len(author_list) > 6:
-                # AMA style uses "et al" for more than 6 authors
-                citation += ", ".join(author_list[:6]) + ", et al. "
-            else:
-                citation += ", ".join(author_list) + ". "
-
-        # Title
-        citation += f"{source['title']}. "
-
-        # Publication date
-        if source["date_published"]:
-            # Try to format date if it's a full date
-            try:
-                date_parts = source["date_published"].split("-")
-                if len(date_parts) == 3:
-                    # Format as Month Day, Year
-                    year, month, day = date_parts
-                    months = [
-                        "January",
-                        "February",
-                        "March",
-                        "April",
-                        "May",
-                        "June",
-                        "July",
-                        "August",
-                        "September",
-                        "October",
-                        "November",
-                        "December",
-                    ]
-                    month_name = (
-                        months[int(month) - 1] if 1 <= int(month) <= 12 else month
-                    )
-                    citation += f"{month_name} {int(day)}, {year}. "
-                else:
-                    citation += f"{source['date_published']}. "
-            except:
-                citation += f"{source['date_published']}. "
-
-        # URL
-        citation += f"Accessed online at: {source['url']}"
-
+        # Generate citation for this source
+        citation = format_citation(source)
         formatted_citations.append(citation)
 
-    print(
-        f"Report generation complete. Generated {len(formatted_citations)} citations."
+    return {"report": report_content, "citations": formatted_citations}
+
+
+def generate_report_in_parts(
+    query: str, insights: str, sources_text: str, source_info: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """
+    Generate a report in multiple parts to handle token limitations.
+
+    Args:
+        query: The original research query
+        insights: Extracted insights
+        sources_text: Formatted source information
+        source_info: List of source metadata
+
+    Returns:
+        Dictionary with report content and citations
+    """
+    print("Generating report in parts due to token limitations")
+
+    # First, generate the report structure and abstract
+    structure_prompt = PromptTemplate.from_template(
+        """You are a professional research analyst tasked with planning a comprehensive report.
+        
+        Research Query: {query}
+        
+        Based on the query, create a detailed outline for a professional research report that includes:
+        
+        1. An abstract (brief overview of the topic and findings)
+        2. Introduction (background and context)
+        3. Main findings (organized by 3-5 key themes or categories)
+        4. Analysis and implications
+        5. Conclusion
+        
+        For each section, provide a brief description of what should be included.
+        
+        If you want to include your thinking process, put it between <think> and </think> tags. Only text after the </think> tag will be used.
+        """
     )
-    return {"report_content": report_content, "citations": formatted_citations}
+
+    # Create chain
+    structure_chain = structure_prompt | llm | StrOutputParser()
+
+    # Generate report structure
+    report_structure = structure_chain.invoke({"query": query})
+
+    # Next, generate the main content sections
+    # We'll do this in a more focused way by providing just the relevant insights
+
+    # Parse the insights into sections if possible
+    insight_sections = {}
+    current_section = "General"
+    current_content = []
+
+    for line in insights.split("\n"):
+        if line.strip() and any(
+            line.strip().startswith(h)
+            for h in ["#", "Key", "Main", "Controversies", "Expert", "Recent"]
+        ):
+            # This looks like a section header
+            if current_content:
+                insight_sections[current_section] = "\n".join(current_content)
+            current_section = line.strip()
+            current_content = []
+        else:
+            current_content.append(line)
+
+    # Add the last section
+    if current_content:
+        insight_sections[current_section] = "\n".join(current_content)
+
+    # Generate each part of the report
+    sections = {
+        "abstract_intro": "Abstract and Introduction",
+        "main_findings": "Main Findings",
+        "analysis": "Analysis and Implications",
+        "conclusion": "Conclusion",
+    }
+
+    section_contents = {}
+
+    for section_key, section_name in sections.items():
+        section_prompt = PromptTemplate.from_template(
+            """You are generating the {section_name} section of a research report.
+            
+            Research Query: {query}
+            
+            Report Structure:
+            {structure}
+            
+            Relevant Insights:
+            {relevant_insights}
+            
+            Available Sources:
+            {sources}
+            
+            Write a high-quality {section_name} section based on the provided information.
+            
+            If you want to include your thinking process, put it between <think> and </think> tags. Only text after the </think> tag will be used.
+            
+            Guidelines:
+            - Maintain a neutral, analytical tone
+            - Cite sources using [Source X] notation when referencing specific information
+            - Prioritize information from sources marked as [HIGH RELEVANCE]
+            - Be concise but comprehensive
+            """
+        )
+
+        # Select relevant insights for this section
+        relevant_insights = insights
+        if section_key == "main_findings":
+            # For main findings, try to include only the fact/arguments sections of insights
+            relevant_insights = "\n\n".join(
+                [
+                    content
+                    for title, content in insight_sections.items()
+                    if any(
+                        keyword in title.lower()
+                        for keyword in [
+                            "fact",
+                            "statistic",
+                            "argument",
+                            "perspective",
+                            "finding",
+                        ]
+                    )
+                ]
+            )
+        elif section_key == "analysis":
+            # For analysis, focus on controversies and expert opinions
+            relevant_insights = "\n\n".join(
+                [
+                    content
+                    for title, content in insight_sections.items()
+                    if any(
+                        keyword in title.lower()
+                        for keyword in [
+                            "controvers",
+                            "debate",
+                            "expert",
+                            "opinion",
+                            "analysis",
+                            "implication",
+                        ]
+                    )
+                ]
+            )
+
+        # Create chain
+        section_chain = section_prompt | llm | StrOutputParser()
+
+        # Generate section content
+        section_contents[section_key] = section_chain.invoke(
+            {
+                "section_name": section_name,
+                "query": query,
+                "structure": report_structure,
+                "relevant_insights": relevant_insights
+                or insights,  # Fall back to all insights if specific section extraction fails
+                "sources": sources_text,
+            }
+        )
+
+    # Combine all sections into a complete report
+    final_report = f"{section_contents['abstract_intro']}\n\n{section_contents['main_findings']}\n\n{section_contents['analysis']}\n\n{section_contents['conclusion']}"
+
+    # Format citations in AMA style
+    formatted_citations = []
+    for source in source_info:
+        # Generate citation for this source
+        citation = format_citation(source)
+        formatted_citations.append(citation)
+
+    return {"report": final_report, "citations": formatted_citations}
+
+
+def format_citation(source: Dict[str, Any]) -> str:
+    """
+    Format a source into a citation.
+
+    Args:
+        source: Source metadata
+
+    Returns:
+        Formatted citation
+    """
+    # AMA style: Authors. Title. Publication date. URL.
+    citation = ""
+
+    # Authors (Last name First initial.)
+    if source["authors"]:
+        author_list = []
+        for author in source["authors"]:
+            # Try to format author names if possible
+            parts = author.split()
+            if len(parts) > 1:
+                # Last name, first initial
+                last_name = parts[-1]
+                first_initial = parts[0][0] if parts[0] else ""
+                author_list.append(f"{last_name} {first_initial}.")
+            else:
+                author_list.append(author)
+
+        if len(author_list) > 6:
+            # If more than 6 authors, use "et al."
+            citation += ", ".join(author_list[:6]) + ", et al. "
+        else:
+            citation += ", ".join(author_list) + ". "
+
+    # Title
+    citation += f"{source['title']}. "
+
+    # Publication date
+    if source["date_published"]:
+        citation += f"{source['date_published']}. "
+
+    # URL
+    citation += source["url"]
+
+    return citation
