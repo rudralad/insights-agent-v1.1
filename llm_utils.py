@@ -47,36 +47,43 @@ load_dotenv()
 
 
 # Custom output parser that extracts content after think tags.
-# Supports formats: ,think><think/> and <think>
+# Ignores text between <think> and </think> tags, and returns only text after the closing tag.
+# Supports variations like </think> and </ think>.
+# If these tags are not present, it returns the original content.
 class ThinkTagsOutputParser(BaseOutputParser):
     """
     Custom output parser that extracts content after think tags.
-    Supports formats: ,think><think/> and <think>
+    Ignores text between <think> and </think> tags, and returns only text after the closing tag.
+    Supports variations like </think> and </ think>.
     If these tags are not present, it returns the original content.
     """
 
     def parse(self, text):
-        # Check for ,think><think/> format
-        if ",think><think/>" in text:
+        # Check for <think>...</think> format
+        if "<think>" in text and ("</think>" in text or "</ think>" in text):
+            # Find closing tag position - check both possible formats
+            closing_tag_pos = -1
+            if "</think>" in text:
+                closing_tag_pos = text.find("</think>") + len("</think>")
+            elif "</ think>" in text:
+                closing_tag_pos = text.find("</ think>") + len("</ think>")
+
+            if closing_tag_pos != -1:
+                # Extract everything after the closing tag
+                content_after_tags = text[closing_tag_pos:].strip()
+                print(
+                    "Found <think>...</think> tags, extracting content after closing tag"
+                )
+                return content_after_tags
+
+        # Check for ,think><think/> format (legacy format)
+        elif ",think><think/>" in text:
             # Extract everything after the tags
             content_after_tags = text.split(",think><think/", 1)[1].strip()
             print("Found ,think><think/> tags, extracting content after them")
             return content_after_tags
 
-        # Check for <think><think/> format (previously implemented format)
-        elif "<think><think/>" in text:
-            # Extract everything after the tags
-            content_after_tags = text.split("<think><think/>", 1)[1].strip()
-            print("Found <think><think/> tags, extracting content after them")
-            return content_after_tags
-
-        # Check for <think> format
-        elif "<think>" in text:
-            # Extract everything after the tags
-            content_after_tags = text.split("<think>", 1)[1].strip()
-            print("Found <think> tags, extracting content after them")
-            return content_after_tags
-
+        # No recognized tag pattern found, return original text
         return text
 
 
@@ -154,7 +161,7 @@ document_store = {"ids": [], "texts": [], "embeddings": [], "metadatas": []}
 def generate_search_queries(query: str, num_queries: int = 5) -> List[str]:
     """
     Generate diverse search queries based on the original query.
-    Extracts content after <think> tags if present in the LLM response.
+    The ThinkTagsOutputParser extracts content after </think> tags if present.
 
     Args:
         query: The original query from the user
@@ -173,7 +180,7 @@ def generate_search_queries(query: str, num_queries: int = 5) -> List[str]:
         Generate {num_queries} different search queries that would help gather comprehensive information about this topic.
         Each query should focus on different aspects or use different terminology.
         
-        If you want to include your thinking process, put it before a <think> tag, and put the actual queries after the tag.
+        If you want to include your thinking process, put it between <think> and </think> tags. Only text after the </think> tag will be used.
         
         Output the queries as a numbered list, one per line, without any additional text.
         """
@@ -184,13 +191,6 @@ def generate_search_queries(query: str, num_queries: int = 5) -> List[str]:
 
     # Generate queries
     result = chain.invoke({"query": query, "num_queries": num_queries})
-
-    # Check if the result contains <think> tags and extract content after them
-    if "<think>" in result:
-        print(
-            "Found <think> tags in query generation, extracting queries after the tags"
-        )
-        result = result.split("<think>", 1)[1].strip()
 
     # Parse the result into a list of queries
     queries = []
@@ -380,7 +380,7 @@ def extract_insights(scraped_content: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Extract key insights from scraped content using LLM.
     Uses semantic search to rank content by relevance before analysis.
-    Extracts content after <think> tags if present in the LLM response.
+    The ThinkTagsOutputParser extracts content after </think> tags if present.
 
     Args:
         scraped_content: List of scraped content dictionaries
@@ -430,7 +430,7 @@ def extract_insights(scraped_content: List[Dict[str, Any]]) -> Dict[str, Any]:
         4. Expert opinions
         5. Recent developments
         
-        If you want to include your thinking process, put it before a <think> tag, and put the actual insights after the tag.
+        If you want to include your thinking process, put it between <think> and </think> tags. Only text after the </think> tag will be used.
         
         Content:
         {content}
@@ -447,13 +447,6 @@ def extract_insights(scraped_content: List[Dict[str, Any]]) -> Dict[str, Any]:
     # Extract insights
     insights = chain.invoke({"content": combined_text})
 
-    # Check if the result contains <think> tags and extract content after them
-    if "<think>" in insights:
-        print(
-            "Found <think> tags in insights extraction, extracting content after the tags"
-        )
-        insights = insights.split("<think>", 1)[1].strip()
-
     print(f"Extracted insights from {len(ranked_content)} sources")
 
     return {"insights": insights, "sources": scraped_content}
@@ -463,7 +456,7 @@ def generate_report(query: str, extraction_results: Dict[str, Any]) -> Dict[str,
     """
     Generate a comprehensive research report based on extracted insights.
     Uses semantic search to ensure the most relevant sources are prioritized.
-    Extracts content after <think> tags if present in the LLM response.
+    The ThinkTagsOutputParser extracts content after </think> tags if present.
 
     Args:
         query: The original research query
@@ -524,7 +517,7 @@ def generate_report(query: str, extraction_results: Dict[str, Any]) -> Dict[str,
         4. Analysis and implications
         5. Conclusion
         
-        If you want to include your thinking process, put it before a <think> tag, and put the actual report after the tag.
+        If you want to include your thinking process, put it between <think> and </think> tags. Only text after the </think> tag will be used.
         
         Important guidelines:
         - Maintain a neutral, analytical tone
@@ -546,13 +539,6 @@ def generate_report(query: str, extraction_results: Dict[str, Any]) -> Dict[str,
     report_content = chain.invoke(
         {"query": query, "insights": insights, "sources": sources_text}
     )
-
-    # Check if the result contains <think> tags and extract content after them
-    if "<think>" in report_content:
-        print(
-            "Found <think> tags in report generation, extracting content after the tags"
-        )
-        report_content = report_content.split("<think>", 1)[1].strip()
 
     # Format citations in AMA style
     formatted_citations = []
