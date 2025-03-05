@@ -6,16 +6,24 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.documents import Document
+from langchain_core.output_parsers import BaseOutputParser
 from dotenv import load_dotenv
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 import tempfile
 import uuid
 import sys
+import re
 
 # Common model options for each provider
 OPENAI_MODELS = ["o1-mini", "gpt-3.5-turbo", "gpt-4", "gpt-4-turbo"]
-GROQ_MODELS = ["llama3-70b-8192", "llama3-8b-8192", "mixtral-8x7b-32768", "gemma-7b-it"]
+GROQ_MODELS = [
+    "llama3-70b-8192",
+    "llama3-8b-8192",
+    "mixtral-8x7b-32768",
+    "gemma-7b-it",
+    "deepseek-r1-distill-llama-70b",
+]
 GEMINI_MODELS = [
     "gemini-1.5-pro",
     "gemini-1.5-flash",
@@ -38,6 +46,22 @@ except ImportError:
 load_dotenv()
 
 
+# Custom output parser that extracts content after ,think><think/> tags
+class ThinkTagsOutputParser(BaseOutputParser):
+    """
+    Custom output parser that extracts content after ,think><think/> tags.
+    If these tags are not present, it returns the original content.
+    """
+
+    def parse(self, text):
+        if ",think><think/>" in text:
+            # Extract everything after the tags
+            content_after_tags = text.split(",think><think/>", 1)[1].strip()
+            print("Found think tags, extracting content after them")
+            return content_after_tags
+        return text
+
+
 # Initialize LLM based on provider configuration
 def initialize_llm():
     """
@@ -45,15 +69,17 @@ def initialize_llm():
     Supports OpenAI, Groq, and Gemini.
 
     Returns:
-        The initialized LLM instance
+        The initialized LLM instance with output parser for think tags
     """
     provider = os.getenv("LLM_PROVIDER", "openai").lower()
     model = os.getenv("LLM_MODEL", "o1-mini")
 
     print(f"Initializing LLM with provider: {provider}, model: {model}")
 
+    # Initialize the base LLM based on provider
+    base_llm = None
     if provider == "openai":
-        return ChatOpenAI(
+        base_llm = ChatOpenAI(
             model=model, api_key=os.getenv("OPENAI_API_KEY"), temperature=0.7
         )
     elif provider == "groq":
@@ -62,29 +88,37 @@ def initialize_llm():
                 "ERROR: Groq integration not available. Install with 'pip install langchain-groq'."
             )
             print("Falling back to OpenAI.")
-            return ChatOpenAI(
+            base_llm = ChatOpenAI(
                 model="o1-mini", api_key=os.getenv("OPENAI_API_KEY"), temperature=0.7
             )
-
-        return ChatGroq(model=model, api_key=os.getenv("GROQ_API_KEY"), temperature=0.7)
+        else:
+            base_llm = ChatGroq(
+                model=model, api_key=os.getenv("GROQ_API_KEY"), temperature=0.7
+            )
     elif provider == "gemini":
         if ChatGoogleGenerativeAI is None:
             print(
                 "ERROR: Google Gemini integration not available. Install with 'pip install langchain-google-genai'."
             )
             print("Falling back to OpenAI.")
-            return ChatOpenAI(
+            base_llm = ChatOpenAI(
                 model="o1-mini", api_key=os.getenv("OPENAI_API_KEY"), temperature=0.7
             )
-
-        return ChatGoogleGenerativeAI(
-            model=model, api_key=os.getenv("GEMINI_API_KEY"), temperature=0.7
-        )
+        else:
+            base_llm = ChatGoogleGenerativeAI(
+                model=model, api_key=os.getenv("GEMINI_API_KEY"), temperature=0.7
+            )
     else:
         print(f"WARNING: Unknown LLM provider '{provider}'. Falling back to OpenAI.")
-        return ChatOpenAI(
+        base_llm = ChatOpenAI(
             model="o1-mini", api_key=os.getenv("OPENAI_API_KEY"), temperature=0.7
         )
+
+    # Wrap the LLM with the ThinkTagsOutputParser
+    think_tags_parser = ThinkTagsOutputParser()
+
+    # Create and return a chain that processes the output through the parser
+    return base_llm | think_tags_parser
 
 
 # Initialize LLM
@@ -182,9 +216,9 @@ def embed_text(text: str) -> List[float]:
     try:
         # Truncate text if it's too long (OpenAI has token limits)
         # A conservative estimate is 8000 characters ~ 2000 tokens
-        if len(text) > 8000:
+        if len(text) > 5000:
             print(
-                f"Warning: Truncating text from {len(text)} to 8000 characters for embedding."
+                f"Warning: Truncating text from {len(text)} to 5000 characters for embedding."
             )
             text = text[:8000]
 
