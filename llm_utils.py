@@ -578,7 +578,7 @@ def generate_single_report(
         citation = format_citation(source)
         formatted_citations.append(citation)
 
-    return {"report": report_content, "citations": formatted_citations}
+    return {"report_content": report_content, "citations": formatted_citations}
 
 
 def generate_report_in_parts(
@@ -751,7 +751,10 @@ def generate_report_in_parts(
         citation = format_citation(source)
         formatted_citations.append(citation)
 
-    return {"report": final_report, "citations": formatted_citations}
+    print(
+        f"Report generation complete. Generated {len(formatted_citations)} citations."
+    )
+    return {"report_content": final_report, "citations": formatted_citations}
 
 
 def format_citation(source: Dict[str, Any]) -> str:
