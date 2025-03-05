@@ -381,6 +381,7 @@ def extract_insights(scraped_content: List[Dict[str, Any]]) -> Dict[str, Any]:
     Extract key insights from scraped content using LLM.
     Uses semantic search to rank content by relevance before analysis.
     The ThinkTagsOutputParser extracts content after </think> tags if present.
+    Makes multiple LLM calls for large content to handle token limitations.
 
     Args:
         scraped_content: List of scraped content dictionaries
@@ -396,8 +397,19 @@ def extract_insights(scraped_content: List[Dict[str, Any]]) -> Dict[str, Any]:
         relevance_query, scraped_content, top_k=len(scraped_content)
     )
 
-    # Prepare content for analysis - now using the ranked content
-    combined_text = ""
+    # Check current LLM provider to handle token limits appropriately
+    provider = os.getenv("LLM_PROVIDER", "openai").lower()
+
+    # Define a max batch size based on the provider
+    # Groq has a lower token limit (~6000 tokens), so we use a smaller batch size
+    max_chars_per_batch = 12000 if provider == "groq" else 20000
+
+    # Divide sources into batches to avoid token limits
+    all_insights = []
+    current_batch_text = ""
+    current_batch_sources = []
+    batch_number = 1
+
     for i, item in enumerate(ranked_content):
         title = item.get("title", f"Document {i+1}")
         content = item.get("content", "")
@@ -414,47 +426,55 @@ def extract_insights(scraped_content: List[Dict[str, Any]]) -> Dict[str, Any]:
         if content:
             # Give more content space to higher-ranked sources
             content_length = 3000 if i < 3 else 1500
-            combined_text += f"\n\n--- {priority_label} {title} {pdf_indicator} ---\n{content[:content_length]}..."
+            truncated_content = content[:content_length]
 
-    # Prompt for extracting insights
-    prompt = PromptTemplate.from_template(
-        """You are a research assistant tasked with extracting key insights from multiple sources.
-        
-        Below is content from various web sources, ranked by relevance. Sources marked as [Priority Source] and [PDF] 
-        should be given more weight as they are likely more relevant and reliable.
-        
-        Extract the following:
-        1. Key facts and statistics
-        2. Main arguments or perspectives
-        3. Potential controversies or debates
-        4. Expert opinions
-        5. Recent developments
-        
-        If you want to include your thinking process, put it between <think> and </think> tags. Only text after the </think> tag will be used.
-        
-        Content:
-        {content}
-        
-        Provide your analysis in a structured format with clear headings for each category.
-        Focus on extracting the most important and relevant information.
-        Prioritize information from sources marked as [Priority Source] and [PDF].
-        """
+            # Format the document text
+            doc_text = f"\n\n--- {priority_label} {title} {pdf_indicator} ---\n{truncated_content}..."
+
+            # Check if adding this document would exceed the batch size
+            if (
+                len(current_batch_text) + len(doc_text) > max_chars_per_batch
+                and current_batch_text
+            ):
+                # Process the current batch before starting a new one
+                batch_insights = process_content_batch(current_batch_text, batch_number)
+                all_insights.append(batch_insights)
+
+                # Start a new batch
+                current_batch_text = doc_text
+                current_batch_sources = [title]
+                batch_number += 1
+            else:
+                # Add to the current batch
+                current_batch_text += doc_text
+                current_batch_sources.append(title)
+
+    # Process the final batch if it contains any sources
+    if current_batch_text:
+        batch_insights = process_content_batch(current_batch_text, batch_number)
+        all_insights.append(batch_insights)
+
+    # Combine all insights from different batches
+    combined_insights = ""
+    if len(all_insights) == 1:
+        combined_insights = all_insights[0]
+    else:
+        # If we had multiple batches, compile them together
+        combined_insights = compile_insights(all_insights)
+
+    print(
+        f"Extracted insights from {len(ranked_content)} sources across {batch_number} batches"
     )
 
-    # Create chain
-    chain = prompt | llm | StrOutputParser()
+    # Ensure there's no markdown formatting in the final insights
+    final_insights = clean_report_formatting(combined_insights)
 
-    # Extract insights
-    insights = chain.invoke({"content": combined_text})
-
-    print(f"Extracted insights from {len(ranked_content)} sources")
-
-    return {"insights": insights, "sources": scraped_content}
+    return {"insights": final_insights, "sources": scraped_content}
 
 
 def generate_report(query: str, extraction_results: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Generate a comprehensive research report based on extracted insights.
+    Generate a comprehensive research report of atleast 750-800 words based on extracted insights.
     Uses semantic search to ensure the most relevant sources are prioritized.
     The ThinkTagsOutputParser extracts content after </think> tags if present.
     Handles token limitations for different LLM providers.
@@ -558,6 +578,9 @@ def generate_single_report(
         - Focus on providing valuable insights rather than just summarizing the sources
         - Be concise but comprehensive
         - Do NOT include a separate references or bibliography section - citations will be added separately
+        - Do NOT use markdown code formatting (```), this will cause rendering issues
+        - Format section titles using plain text with line breaks instead of markdown formatting
+        - Use plain text formatting only
         
         Your report should be suitable for a professional audience seeking to understand this topic in depth.
         """
@@ -571,6 +594,10 @@ def generate_single_report(
         {"query": query, "insights": insights, "sources": sources_text}
     )
 
+    # Process the report content to remove any markdown code blocks or triple backticks
+    # This prevents the report from being displayed as code
+    processed_report = clean_report_formatting(report_content)
+
     # Format citations in AMA style
     formatted_citations = []
     for source in source_info:
@@ -578,7 +605,28 @@ def generate_single_report(
         citation = format_citation(source)
         formatted_citations.append(citation)
 
-    return {"report_content": report_content, "citations": formatted_citations}
+    return {"report_content": processed_report, "citations": formatted_citations}
+
+
+def clean_report_formatting(report_text: str) -> str:
+    """
+    Clean up report formatting to prevent display issues.
+
+    Args:
+        report_text: The raw report text
+
+    Returns:
+        Cleaned report text
+    """
+    # Remove any triple backticks (code blocks)
+    cleaned_text = re.sub(r"```[a-zA-Z]*\n", "", report_text)
+    cleaned_text = cleaned_text.replace("```", "")
+
+    # Make sure headings are properly formatted
+    # Replace markdown headings with plain text headings if present
+    cleaned_text = re.sub(r"^#+ (.*?)$", r"\1", cleaned_text, flags=re.MULTILINE)
+
+    return cleaned_text
 
 
 def generate_report_in_parts(
@@ -613,6 +661,8 @@ def generate_report_in_parts(
         5. Conclusion
         
         For each section, provide a brief description of what should be included.
+        
+        Use plain text formatting only. Do NOT use markdown code formatting (```).
         
         If you want to include your thinking process, put it between <think> and </think> tags. Only text after the </think> tag will be used.
         """
@@ -683,6 +733,9 @@ def generate_report_in_parts(
             - Cite sources using [Source X] notation when referencing specific information
             - Prioritize information from sources marked as [HIGH RELEVANCE]
             - Be concise but comprehensive
+            - Do NOT use markdown code formatting (```), this will cause rendering issues
+            - Format section titles using plain text with line breaks instead of markdown formatting
+            - Use plain text formatting only
             """
         )
 
@@ -730,7 +783,7 @@ def generate_report_in_parts(
         section_chain = section_prompt | llm | StrOutputParser()
 
         # Generate section content
-        section_contents[section_key] = section_chain.invoke(
+        section_content = section_chain.invoke(
             {
                 "section_name": section_name,
                 "query": query,
@@ -740,6 +793,9 @@ def generate_report_in_parts(
                 "sources": sources_text,
             }
         )
+
+        # Clean the formatting of each section
+        section_contents[section_key] = clean_report_formatting(section_content)
 
     # Combine all sections into a complete report
     final_report = f"{section_contents['abstract_intro']}\n\n{section_contents['main_findings']}\n\n{section_contents['analysis']}\n\n{section_contents['conclusion']}"
@@ -801,3 +857,64 @@ def format_citation(source: Dict[str, Any]) -> str:
     citation += source["url"]
 
     return citation
+
+
+def compile_insights(batch_insights: List[str]) -> str:
+    """
+    Compile insights from multiple batches into a coherent summary.
+
+    Args:
+        batch_insights: List of insights from different batches
+
+    Returns:
+        A compiled and summarized set of insights
+    """
+    # Join all insights with clear separators
+    all_insights_text = "\n\n".join(
+        [
+            f"--- INSIGHTS BATCH {i+1} ---\n{insights}"
+            for i, insights in enumerate(batch_insights)
+        ]
+    )
+
+    # Create a prompt to compile and summarize the insights
+    prompt = PromptTemplate.from_template(
+        """You are a research analyst compiling insights from multiple analysis batches.
+        
+        Below are insights that were extracted from different batches of source materials.
+        Your task is to compile them into a single, coherent set of insights, removing any duplicates
+        and organizing the information logically.
+        
+        Batched Insights:
+        {all_insights}
+        
+        Compile these insights into a single comprehensive analysis with these sections:
+        1. Key facts and statistics
+        2. Main arguments or perspectives
+        3. Potential controversies or debates
+        4. Expert opinions
+        5. Recent developments
+        
+        If you want to include your thinking process, put it between <think> and </think> tags. Only text after the </think> tag will be used.
+        
+        Focus on creating a coherent narrative that incorporates the most important information from all batches.
+        Eliminate redundancies and organize related information together.
+        
+        Important formatting guidelines:
+        - Do NOT use markdown code formatting (```), this will cause rendering issues
+        - Format section titles using plain text with line breaks instead of markdown formatting
+        - Use plain text formatting only
+        """
+    )
+
+    # Create chain
+    chain = prompt | llm | StrOutputParser()
+
+    # Compile insights
+    print(f"Compiling insights from {len(batch_insights)} batches")
+    compiled_insights = chain.invoke({"all_insights": all_insights_text})
+
+    # Clean the formatting to prevent display issues
+    cleaned_insights = clean_report_formatting(compiled_insights)
+
+    return cleaned_insights
